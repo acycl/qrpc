@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/quic-go/quic-go"
 	"google.golang.org/protobuf/proto"
@@ -35,6 +36,12 @@ type ServiceDesc struct {
 // Server listens for QUIC connections and dispatches incoming RPC calls to
 // registered service implementations.
 type Server struct {
+	// HandlerTimeout, if non-zero, is the maximum duration allowed for a
+	// single RPC handler to complete. When the timeout expires the handler's
+	// context is cancelled. A zero value means no per-RPC timeout is applied
+	// and handlers rely on the QUIC idle timeout instead.
+	HandlerTimeout time.Duration
+
 	mu       sync.Mutex
 	services map[string]*serviceInfo
 	serving  bool
@@ -177,7 +184,14 @@ func (s *Server) handleStream(stream quic.Stream) {
 		return
 	}
 
-	resp, err := handler(info.impl, stream.Context(), payload)
+	ctx := stream.Context()
+	if s.HandlerTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, s.HandlerTimeout)
+		defer cancel()
+	}
+
+	resp, err := handler(info.impl, ctx, payload)
 	if err != nil {
 		writeErrorResponse(stream, err)
 		return
