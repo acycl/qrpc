@@ -82,10 +82,8 @@ func readRequest(r io.Reader) (method, payload []byte, buf poolBuf, err error) {
 	}
 
 	total := int(methodLen + payloadLen)
-	bp := getBuf(total)
-	*bp = (*bp)[:total]
-	if _, err := io.ReadFull(r, *bp); err != nil {
-		putBuf(bp)
+	bp, err := readBuf(r, total)
+	if err != nil {
 		return nil, nil, poolBuf{}, err
 	}
 	return (*bp)[:methodLen], (*bp)[methodLen:], poolBuf{bp: bp}, nil
@@ -150,10 +148,8 @@ func readResponse(r io.Reader) ([]byte, poolBuf, error) {
 		return nil, poolBuf{}, nil
 	}
 
-	bp := getBuf(int(payloadLen))
-	*bp = (*bp)[:payloadLen]
-	if _, err := io.ReadFull(r, *bp); err != nil {
-		putBuf(bp)
+	bp, err := readBuf(r, int(payloadLen))
+	if err != nil {
 		return nil, poolBuf{}, err
 	}
 	if status == statusError {
