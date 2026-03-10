@@ -91,7 +91,7 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string, tlsConfig *tls
 	tc := tlsConfig.Clone()
 	tc.NextProtos = []string{alpnProtocol}
 
-	listener, err := quic.ListenAddr(addr, tc, nil)
+	listener, err := quic.ListenAddr(addr, tc, defaultQUICConfig())
 	if err != nil {
 		return fmt.Errorf("qrpc: listen: %w", err)
 	}
@@ -151,10 +151,11 @@ func (s *Server) handleConn(ctx context.Context, conn quic.Connection) {
 func (s *Server) handleStream(stream quic.Stream) {
 	defer stream.Close()
 
-	method, payload, err := readRequest(stream)
+	method, payload, buf, err := readRequest(stream)
 	if err != nil {
 		return
 	}
+	defer buf.release()
 
 	service, methodName, err := splitMethod(method)
 	if err != nil {

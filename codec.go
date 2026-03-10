@@ -36,71 +36,83 @@ const (
 )
 
 // marshalRequest marshals req and writes the complete request frame to w in a
-// single write call. The method string and protobuf payload are encoded
-// directly into one contiguous buffer using proto.MarshalAppend.
+// single write call. A pooled buffer is used to avoid per-call heap
+// allocations. The method string and protobuf payload are encoded directly into
+// one contiguous buffer using proto.MarshalAppend.
 func marshalRequest(w io.Writer, method string, req proto.Message) error {
 	methodLen := len(method)
 	payloadSize := proto.Size(req)
 
-	buf := make([]byte, 8+methodLen, 8+methodLen+payloadSize)
-	binary.BigEndian.PutUint32(buf[0:], uint32(methodLen))
-	// buf[4:8] is a placeholder for payload length, filled after marshal.
+	bp := getBuf(8 + methodLen + payloadSize)
+	buf := (*bp)[:8+methodLen]
+	binary.BigEndian.PutUint32(buf, uint32(methodLen))
 	copy(buf[8:], method)
 
-	var err error
-	buf, err = proto.MarshalOptions{}.MarshalAppend(buf, req)
+	buf, err := proto.MarshalOptions{}.MarshalAppend(buf, req)
 	if err != nil {
+		*bp = buf
+		putBuf(bp)
 		return fmt.Errorf("qrpc: marshal request: %w", err)
 	}
-	binary.BigEndian.PutUint32(buf[4:8], uint32(len(buf)-8-methodLen))
+	binary.BigEndian.PutUint32(buf[4:], uint32(len(buf)-8-methodLen))
 
-	_, err = w.Write(buf)
-	return err
+	_, writeErr := w.Write(buf)
+	*bp = buf
+	putBuf(bp)
+	return writeErr
 }
 
-// readRequest reads a request frame from r, returning the method name as a
-// byte slice (to avoid a string allocation) and the raw payload bytes. The
-// returned slices share the same underlying array.
-func readRequest(r io.Reader) (method, payload []byte, err error) {
+// readRequest reads a request frame from r, returning the method name and raw
+// payload as byte slices. Both slices share the backing array of the returned
+// poolBuf; the caller must call poolBuf.release when both slices are no longer
+// needed.
+func readRequest(r io.Reader) (method, payload []byte, buf poolBuf, err error) {
 	var hdr [8]byte
 	if _, err := io.ReadFull(r, hdr[:]); err != nil {
-		return nil, nil, err
+		return nil, nil, poolBuf{}, err
 	}
 
 	methodLen := binary.BigEndian.Uint32(hdr[0:])
 	payloadLen := binary.BigEndian.Uint32(hdr[4:])
 	if methodLen > maxMethodSize {
-		return nil, nil, fmt.Errorf("qrpc: method name length %d exceeds maximum %d", methodLen, maxMethodSize)
+		return nil, nil, poolBuf{}, fmt.Errorf("qrpc: method name length %d exceeds maximum %d", methodLen, maxMethodSize)
 	}
 	if payloadLen > maxPayloadSize {
-		return nil, nil, fmt.Errorf("qrpc: payload size %d exceeds maximum %d", payloadLen, maxPayloadSize)
+		return nil, nil, poolBuf{}, fmt.Errorf("qrpc: payload size %d exceeds maximum %d", payloadLen, maxPayloadSize)
 	}
 
-	buf := make([]byte, methodLen+payloadLen)
-	if _, err := io.ReadFull(r, buf); err != nil {
-		return nil, nil, err
+	total := int(methodLen + payloadLen)
+	bp := getBuf(total)
+	*bp = (*bp)[:total]
+	if _, err := io.ReadFull(r, *bp); err != nil {
+		putBuf(bp)
+		return nil, nil, poolBuf{}, err
 	}
-	return buf[:methodLen], buf[methodLen:], nil
+	return (*bp)[:methodLen], (*bp)[methodLen:], poolBuf{bp: bp}, nil
 }
 
 // marshalResponse marshals msg and writes the complete success response frame
-// to w in a single write call using proto.MarshalAppend.
+// to w in a single write call. A pooled buffer is used to avoid per-call heap
+// allocations.
 func marshalResponse(w io.Writer, msg proto.Message) error {
 	payloadSize := proto.Size(msg)
 
-	buf := make([]byte, 5, 5+payloadSize)
+	bp := getBuf(5 + payloadSize)
+	buf := (*bp)[:5]
 	buf[0] = statusOK
-	// buf[1:5] is a placeholder for payload length, filled after marshal.
 
-	var err error
-	buf, err = proto.MarshalOptions{}.MarshalAppend(buf, msg)
+	buf, err := proto.MarshalOptions{}.MarshalAppend(buf, msg)
 	if err != nil {
+		*bp = buf
+		putBuf(bp)
 		return fmt.Errorf("qrpc: marshal response: %w", err)
 	}
 	binary.BigEndian.PutUint32(buf[1:5], uint32(len(buf)-5))
 
-	_, err = w.Write(buf)
-	return err
+	_, writeErr := w.Write(buf)
+	*bp = buf
+	putBuf(bp)
+	return writeErr
 }
 
 // writeErrorResponse writes a complete error response frame to w in a single
@@ -116,33 +128,38 @@ func writeErrorResponse(w io.Writer, rpcErr error) error {
 }
 
 // readResponse reads a response frame from r. On success it returns the raw
-// payload bytes. On error status it returns an error containing the remote
-// message.
-func readResponse(r io.Reader) ([]byte, error) {
+// payload bytes backed by a pooled buffer. The caller must call
+// poolBuf.release when the payload is no longer needed. On error status it
+// returns an error containing the remote message (no poolBuf to release).
+func readResponse(r io.Reader) ([]byte, poolBuf, error) {
 	var hdr [5]byte
 	if _, err := io.ReadFull(r, hdr[:]); err != nil {
-		return nil, err
+		return nil, poolBuf{}, err
 	}
 
 	status := hdr[0]
 	payloadLen := binary.BigEndian.Uint32(hdr[1:])
 	if payloadLen > maxPayloadSize {
-		return nil, fmt.Errorf("qrpc: payload size %d exceeds maximum %d", payloadLen, maxPayloadSize)
+		return nil, poolBuf{}, fmt.Errorf("qrpc: payload size %d exceeds maximum %d", payloadLen, maxPayloadSize)
 	}
 
 	if payloadLen == 0 {
 		if status == statusError {
-			return nil, errors.New("qrpc: remote error: (empty)")
+			return nil, poolBuf{}, errors.New("qrpc: remote error: (empty)")
 		}
-		return nil, nil
+		return nil, poolBuf{}, nil
 	}
 
-	payload := make([]byte, payloadLen)
-	if _, err := io.ReadFull(r, payload); err != nil {
-		return nil, err
+	bp := getBuf(int(payloadLen))
+	*bp = (*bp)[:payloadLen]
+	if _, err := io.ReadFull(r, *bp); err != nil {
+		putBuf(bp)
+		return nil, poolBuf{}, err
 	}
 	if status == statusError {
-		return nil, fmt.Errorf("qrpc: remote error: %s", payload)
+		errMsg := string(*bp)
+		putBuf(bp)
+		return nil, poolBuf{}, fmt.Errorf("qrpc: remote error: %s", errMsg)
 	}
-	return payload, nil
+	return *bp, poolBuf{bp: bp}, nil
 }
