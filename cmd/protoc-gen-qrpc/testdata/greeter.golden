@@ -5,7 +5,7 @@ package greeter
 
 import (
 	context "context"
-	qrpc "github.com/buth/qrpc"
+	qrpc "github.com/acycl/qrpc"
 	proto "google.golang.org/protobuf/proto"
 )
 

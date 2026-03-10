@@ -15,13 +15,13 @@ Each RPC maps to a single QUIC stream, giving you built-in multiplexing, head-of
 ## Installation
 
 ```sh
-go get github.com/buth/qrpc
+go get github.com/acycl/qrpc
 ```
 
 Install the protoc plugin:
 
 ```sh
-go install github.com/buth/qrpc/cmd/protoc-gen-qrpc@latest
+go install github.com/acycl/qrpc/cmd/protoc-gen-qrpc@latest
 ```
 
 ## Quick start
@@ -67,7 +67,7 @@ import (
 	"crypto/tls"
 	"log"
 
-	"github.com/buth/qrpc"
+	"github.com/acycl/qrpc"
 	pb "example.com/greeter"
 )
 
@@ -103,7 +103,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/buth/qrpc"
+	"github.com/acycl/qrpc"
 	pb "example.com/greeter"
 )
 

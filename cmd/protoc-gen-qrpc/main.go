@@ -1,7 +1,7 @@
 // Command protoc-gen-qrpc is a protoc plugin that generates Go client and
 // server stubs for the qrpc framework. Install and use it with:
 //
-//	go install github.com/buth/qrpc/cmd/protoc-gen-qrpc@latest
+//	go install github.com/acycl/qrpc/cmd/protoc-gen-qrpc@latest
 //	protoc --qrpc_out=. --qrpc_opt=paths=source_relative your_service.proto
 package main
 
@@ -59,7 +59,7 @@ func generateFile(plugin *protogen.Plugin, f *protogen.File) {
 	g.P("package ", f.GoPackageName)
 	g.P()
 
-	qrpcPkg := protogen.GoImportPath("github.com/buth/qrpc")
+	qrpcPkg := protogen.GoImportPath("github.com/acycl/qrpc")
 	contextPkg := protogen.GoImportPath("context")
 	protoPkg := protogen.GoImportPath("google.golang.org/protobuf/proto")
 

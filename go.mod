@@ -1,4 +1,4 @@
-module github.com/buth/qrpc
+module github.com/acycl/qrpc
 
 go 1.25
 
