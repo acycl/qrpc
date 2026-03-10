@@ -23,7 +23,26 @@ func generate(plugin *protogen.Plugin) error {
 		if !f.Generate || len(f.Services) == 0 {
 			continue
 		}
+		if err := checkNoStreaming(f); err != nil {
+			return err
+		}
 		generateFile(plugin, f)
+	}
+	return nil
+}
+
+// checkNoStreaming returns an error if any method in f uses streaming, which
+// qrpc does not support.
+func checkNoStreaming(f *protogen.File) error {
+	for _, svc := range f.Services {
+		for _, m := range svc.Methods {
+			if m.Desc.IsStreamingClient() || m.Desc.IsStreamingServer() {
+				return fmt.Errorf(
+					"%s: method %s.%s uses streaming, which is not supported by qrpc",
+					f.Desc.Path(), svc.Desc.FullName(), m.Desc.Name(),
+				)
+			}
+		}
 	}
 	return nil
 }
@@ -49,24 +68,14 @@ func generateFile(plugin *protogen.Plugin, f *protogen.File) {
 	}
 }
 
-// unaryMethods returns only the non-streaming methods from svc.
-func unaryMethods(svc *protogen.Service) []*protogen.Method {
-	var out []*protogen.Method
-	for _, m := range svc.Methods {
-		if !m.Desc.IsStreamingClient() && !m.Desc.IsStreamingServer() {
-			out = append(out, m)
-		}
-	}
-	return out
-}
-
 // generateService emits server interface, registration function, method
 // handlers, service descriptor, client interface, and client implementation
-// for a single protobuf service.
+// for a single protobuf service. All methods must be unary; streaming methods
+// are rejected earlier by checkNoStreaming.
 func generateService(g *protogen.GeneratedFile, svc *protogen.Service, qrpcPkg, contextPkg, protoPkg protogen.GoImportPath) {
 	svcName := svc.GoName
 	fullName := string(svc.Desc.FullName())
-	methods := unaryMethods(svc)
+	methods := svc.Methods
 
 	// --- Server interface ---
 	g.P("// ", svcName, "Server is the server API for the ", svcName, " service.")
