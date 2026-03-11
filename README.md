@@ -1,13 +1,14 @@
 # qrpc
 
-A lightweight RPC framework for Go that runs over [QUIC](https://www.rfc-editor.org/rfc/rfc9000.html) instead of TCP. It uses [Protocol Buffers](https://protobuf.dev/) for service definitions and includes a `protoc` plugin that generates type-safe client and server stubs.
+A lightweight RPC framework for Go that runs over [QUIC](https://www.rfc-editor.org/rfc/rfc9000.html) instead of TCP. It uses [Protocol Buffers](https://protobuf.dev/) for service definitions and includes a `protoc` plugin that generates type-safe client and server stubs in the same style as [gRPC-Go](https://pkg.go.dev/google.golang.org/grpc) — server interfaces, registration functions, and typed client constructors.
 
 Each RPC maps to a single QUIC stream, giving you built-in multiplexing, head-of-line blocking elimination, and TLS 1.3 encryption with zero extra setup.
 
 ## Features
 
 - **QUIC transport** — multiplexed streams over a single connection with no head-of-line blocking
-- **Protobuf code generation** — `protoc-gen-qrpc` generates client interfaces, server interfaces, and registration glue from `.proto` files
+- **Protobuf code generation** — `protoc-gen-qrpc` generates familiar gRPC-style client interfaces, server interfaces, and registration glue from `.proto` files
+- **Transparent reconnection** — `ClientConn` automatically re-establishes the underlying QUIC connection on failure
 - **Minimal wire format** — compact binary framing with no HTTP/2 dependency
 - **Buffer pooling** — `sync.Pool`-backed buffers minimize per-RPC heap allocations
 - **Context cancellation** — client-side context cancellation propagates to stream teardown
@@ -23,6 +24,14 @@ Install the protoc plugin:
 ```sh
 go install github.com/acycl/qrpc/cmd/protoc-gen-qrpc@latest
 ```
+
+Or add it as a [tool dependency](https://go.dev/blog/tools) in your `go.mod`:
+
+```sh
+go get -tool github.com/acycl/qrpc/cmd/protoc-gen-qrpc
+```
+
+This lets you invoke it via `go tool protoc-gen-qrpc` without a global install, which is especially useful with [Buf](#using-buf).
 
 ## Quick start
 
@@ -56,6 +65,12 @@ protoc --go_out=. --go_opt=paths=source_relative \
 ```
 
 This produces `greeter.pb.go` (protobuf messages) and `greeter_qrpc.pb.go` (client/server stubs).
+
+The generated code follows the same pattern as gRPC-Go:
+
+- A **server interface** (`GreeterServer`) that you implement
+- A **registration function** (`RegisterGreeterServer`) to wire it up
+- A **client interface** (`GreeterClient`) with a constructor (`NewGreeterClient`) backed by a `*qrpc.ClientConn`
 
 ### 3. Implement the server
 
@@ -128,6 +143,27 @@ func main() {
 }
 ```
 
+## Using Buf
+
+If you use [Buf](https://buf.build/) for protobuf management, you can invoke `protoc-gen-qrpc` via `go tool` so that your project's pinned version is always used. Add it as a tool dependency (see [Installation](#installation)), then configure `buf.gen.yaml`:
+
+```yaml
+version: v2
+plugins:
+  - protoc_path: ["go", "tool", "protoc-gen-go"]
+    out: .
+    opt: paths=source_relative
+  - protoc_path: ["go", "tool", "protoc-gen-qrpc"]
+    out: .
+    opt: paths=source_relative
+```
+
+Then generate with:
+
+```sh
+buf generate
+```
+
 ## Wire format
 
 Requests and responses use a compact binary framing. No HTTP/2, no HPACK, no grpc-status trailers — just length-prefixed fields on a QUIC stream.
@@ -157,7 +193,8 @@ Requests and responses use a compact binary framing. No HTTP/2, no HPACK, no grp
 | Function / Method | Description |
 |---|---|
 | `qrpc.NewServer()` | Create a new server instance |
-| `srv.RegisterService(desc, impl)` | Register a service (called by generated code) |
+| `srv.RegisterService(desc)` | Register a service (called by generated code) |
+| `srv.HandlerTimeout` | Per-RPC timeout; zero means no limit |
 | `srv.ListenAndServe(ctx, addr, tlsConfig)` | Listen on an address and serve RPCs |
 | `srv.Serve(ctx, listener)` | Serve RPCs on an existing `quic.Listener` |
 
@@ -168,6 +205,8 @@ Requests and responses use a compact binary framing. No HTTP/2, no HPACK, no grp
 | `qrpc.Dial(ctx, addr, tlsConfig)` | Connect to a qrpc server |
 | `cc.Invoke(ctx, method, req, reply)` | Make a unary RPC call (called by generated code) |
 | `cc.Close()` | Close the connection |
+
+The client transparently reconnects if the underlying QUIC connection is lost. Concurrent callers coordinate so that only one reconnection attempt is made.
 
 ### Code generation
 
