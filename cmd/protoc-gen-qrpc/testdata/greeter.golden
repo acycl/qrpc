@@ -19,7 +19,7 @@ func RegisterGreeterServer(s *qrpc.Server, srv GreeterServer) {
 	s.RegisterService(&_Greeter_serviceDesc, srv)
 }
 
-func _Greeter_SayHello_Handler(srv any, ctx context.Context, payload []byte) (proto.Message, error) {
+func _Greeter_SayHello_Handler(ctx context.Context, srv any, payload []byte) (proto.Message, error) {
 	in := new(HelloRequest)
 	if err := proto.Unmarshal(payload, in); err != nil {
 		return nil, err

@@ -114,14 +114,19 @@ func marshalResponse(w io.Writer, msg proto.Message) error {
 }
 
 // writeErrorResponse writes a complete error response frame to w in a single
-// write call.
+// write call. A pooled buffer is used to avoid per-call heap allocations.
 func writeErrorResponse(w io.Writer, rpcErr error) error {
 	msg := rpcErr.Error()
-	buf := make([]byte, 5+len(msg))
+
+	bp := getBuf(5 + len(msg))
+	buf := (*bp)[:5+len(msg)]
 	buf[0] = statusError
 	binary.BigEndian.PutUint32(buf[1:], uint32(len(msg)))
 	copy(buf[5:], msg)
+
 	_, err := w.Write(buf)
+	*bp = buf
+	putBuf(bp)
 	return err
 }
 

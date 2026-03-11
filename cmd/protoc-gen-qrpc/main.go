@@ -96,7 +96,7 @@ func generateService(g *protogen.GeneratedFile, svc *protogen.Service, qrpcPkg, 
 	// --- Method handlers ---
 	for _, m := range methods {
 		handlerName := fmt.Sprintf("_%s_%s_Handler", svcName, m.GoName)
-		g.P("func ", handlerName, "(srv any, ctx ", g.QualifiedGoIdent(contextPkg.Ident("Context")), ", payload []byte) (", g.QualifiedGoIdent(protoPkg.Ident("Message")), ", error) {")
+		g.P("func ", handlerName, "(ctx ", g.QualifiedGoIdent(contextPkg.Ident("Context")), ", srv any, payload []byte) (", g.QualifiedGoIdent(protoPkg.Ident("Message")), ", error) {")
 		g.P("in := new(", g.QualifiedGoIdent(m.Input.GoIdent), ")")
 		g.P("if err := ", g.QualifiedGoIdent(protoPkg.Ident("Unmarshal")), "(payload, in); err != nil {")
 		g.P("return nil, err")

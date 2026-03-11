@@ -1,7 +1,6 @@
 package qrpc
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"fmt"
@@ -13,12 +12,10 @@ import (
 )
 
 // MethodHandler is the handler invoked by the server for a single unary RPC
-// method. The srv argument is the service implementation registered by the
-// caller (placed before ctx to mirror the gRPC generated handler convention).
-// The payload argument contains the raw serialized request bytes. The handler
-// is responsible for unmarshaling the payload into the appropriate message type
-// and returning the response as a proto.Message.
-type MethodHandler func(srv any, ctx context.Context, payload []byte) (proto.Message, error)
+// method. The payload argument contains the raw serialized request bytes. The
+// handler is responsible for unmarshaling the payload into the appropriate
+// message type and returning the response as a proto.Message.
+type MethodHandler func(ctx context.Context, srv any, payload []byte) (proto.Message, error)
 
 // MethodDesc describes a single unary RPC method within a service.
 type MethodDesc struct {
@@ -43,22 +40,22 @@ type Server struct {
 	HandlerTimeout time.Duration
 
 	mu       sync.Mutex
-	services map[string]*serviceInfo
+	handlers map[string]handlerInfo
 	serving  bool
 	wg       sync.WaitGroup
 }
 
-// serviceInfo holds the implementation and method dispatch table for a
-// registered service.
-type serviceInfo struct {
+// handlerInfo holds the implementation and dispatch function for a single
+// registered RPC method.
+type handlerInfo struct {
 	impl    any
-	methods map[string]MethodHandler
+	handler MethodHandler
 }
 
 // NewServer returns a new Server with no registered services.
 func NewServer() *Server {
 	return &Server{
-		services: make(map[string]*serviceInfo),
+		handlers: make(map[string]handlerInfo),
 	}
 }
 
@@ -66,7 +63,7 @@ func NewServer() *Server {
 // method is typically called by generated registration functions (e.g.
 // RegisterGreeterServer) rather than directly by application code. All
 // services must be registered before calling Serve or ListenAndServe. It
-// panics if the service is already registered or if the server is already
+// panics if any method is already registered or if the server is already
 // serving.
 func (s *Server) RegisterService(desc *ServiceDesc, impl any) {
 	s.mu.Lock()
@@ -75,18 +72,14 @@ func (s *Server) RegisterService(desc *ServiceDesc, impl any) {
 	if s.serving {
 		panic("qrpc: RegisterService called after Serve")
 	}
-	if _, ok := s.services[desc.ServiceName]; ok {
-		panic(fmt.Sprintf("qrpc: service %q already registered", desc.ServiceName))
-	}
 
-	info := &serviceInfo{
-		impl:    impl,
-		methods: make(map[string]MethodHandler),
-	}
 	for _, m := range desc.Methods {
-		info.methods[m.MethodName] = m.Handler
+		key := "/" + desc.ServiceName + "/" + m.MethodName
+		if _, ok := s.handlers[key]; ok {
+			panic(fmt.Sprintf("qrpc: method %q already registered", key))
+		}
+		s.handlers[key] = handlerInfo{impl: impl, handler: m.Handler}
 	}
-	s.services[desc.ServiceName] = info
 }
 
 // ListenAndServe starts listening for QUIC connections on addr using the
@@ -107,12 +100,14 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string, tlsConfig *tls
 
 // Serve accepts incoming connections from the provided QUIC listener and
 // dispatches RPC calls. Cancelling ctx stops acceptance of new connections and
-// streams. Serve blocks until all in-flight handlers have completed and then
-// returns ctx.Err().
+// streams. Serve blocks until all in-flight handlers have completed, closes
+// the listener, and then returns ctx.Err().
 func (s *Server) Serve(ctx context.Context, listener *quic.Listener) error {
 	s.mu.Lock()
 	s.serving = true
 	s.mu.Unlock()
+
+	defer listener.Close()
 
 	var acceptErr error
 	for {
@@ -153,7 +148,7 @@ func (s *Server) handleConn(ctx context.Context, conn quic.Connection) {
 }
 
 // handleStream reads a single RPC request from the stream, dispatches it to
-// the appropriate method handler, and writes the response. The services map is
+// the appropriate method handler, and writes the response. The handlers map is
 // accessed without a lock because it is immutable after Serve is called.
 func (s *Server) handleStream(stream quic.Stream) {
 	defer stream.Close()
@@ -164,23 +159,11 @@ func (s *Server) handleStream(stream quic.Stream) {
 	}
 	defer buf.release()
 
-	service, methodName, err := splitMethod(method)
-	if err != nil {
-		writeErrorResponse(stream, err)
-		return
-	}
-
-	// The string(b) conversions in map lookups are optimized by the Go
+	// The string([]byte) conversion in a map lookup is optimized by the Go
 	// compiler to avoid heap allocation.
-	info, ok := s.services[string(service)]
+	h, ok := s.handlers[string(method)]
 	if !ok {
-		writeErrorResponse(stream, fmt.Errorf("qrpc: unknown service %q", service))
-		return
-	}
-
-	handler, ok := info.methods[string(methodName)]
-	if !ok {
-		writeErrorResponse(stream, fmt.Errorf("qrpc: unknown method %q on service %q", methodName, service))
+		writeErrorResponse(stream, fmt.Errorf("qrpc: unknown method %q", method))
 		return
 	}
 
@@ -191,26 +174,13 @@ func (s *Server) handleStream(stream quic.Stream) {
 		defer cancel()
 	}
 
-	resp, err := handler(info.impl, ctx, payload)
+	resp, err := h.handler(ctx, h.impl, payload)
 	if err != nil {
 		writeErrorResponse(stream, err)
 		return
 	}
 
-	marshalResponse(stream, resp)
-}
-
-// splitMethod splits a method byte slice of the form "/service.Name/Method"
-// into its service and method components as byte slices, avoiding any string
-// allocation.
-func splitMethod(method []byte) (service, meth []byte, err error) {
-	if len(method) == 0 || method[0] != '/' {
-		return nil, nil, fmt.Errorf("qrpc: invalid method %q", method)
+	if err := marshalResponse(stream, resp); err != nil {
+		writeErrorResponse(stream, err)
 	}
-	rest := method[1:]
-	i := bytes.IndexByte(rest, '/')
-	if i <= 0 || i == len(rest)-1 {
-		return nil, nil, fmt.Errorf("qrpc: invalid method %q", method)
-	}
-	return rest[:i], rest[i+1:], nil
 }

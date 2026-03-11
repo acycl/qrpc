@@ -39,7 +39,7 @@ func generateTLSConfig(tb testing.TB) *tls.Config {
 }
 
 // echoHandler is a MethodHandler that echoes the request payload back.
-func echoHandler(srv any, ctx context.Context, payload []byte) (proto.Message, error) {
+func echoHandler(ctx context.Context, srv any, payload []byte) (proto.Message, error) {
 	in := new(wrapperspb.BytesValue)
 	if err := proto.Unmarshal(payload, in); err != nil {
 		return nil, err

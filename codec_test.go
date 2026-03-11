@@ -74,35 +74,6 @@ func TestRoundTripErrorResponse(t *testing.T) {
 	}
 }
 
-func TestSplitMethod(t *testing.T) {
-	tests := []struct {
-		input   string
-		service string
-		method  string
-		wantErr bool
-	}{
-		{"/pkg.Svc/Method", "pkg.Svc", "Method", false},
-		{"/a.b.c/D", "a.b.c", "D", false},
-		{"", "", "", true},
-		{"noSlash", "", "", true},
-		{"/missing", "", "", true},
-		{"/empty/", "", "", true},
-		{"//empty", "", "", true},
-	}
-	for _, tt := range tests {
-		svc, meth, err := splitMethod([]byte(tt.input))
-		if (err != nil) != tt.wantErr {
-			t.Errorf("splitMethod(%q): err = %v, wantErr = %v", tt.input, err, tt.wantErr)
-			continue
-		}
-		if err == nil {
-			if string(svc) != tt.service || string(meth) != tt.method {
-				t.Errorf("splitMethod(%q) = (%q, %q), want (%q, %q)", tt.input, svc, meth, tt.service, tt.method)
-			}
-		}
-	}
-}
-
 var benchPayloads = map[string][]byte{
 	"64B":  make([]byte, 64),
 	"1KB":  make([]byte, 1024),
