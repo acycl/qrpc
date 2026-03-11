@@ -61,10 +61,9 @@ func generateFile(plugin *protogen.Plugin, f *protogen.File) {
 
 	qrpcPkg := protogen.GoImportPath("github.com/acycl/qrpc")
 	contextPkg := protogen.GoImportPath("context")
-	protoPkg := protogen.GoImportPath("google.golang.org/protobuf/proto")
 
 	for _, svc := range f.Services {
-		generateService(g, svc, qrpcPkg, contextPkg, protoPkg)
+		generateService(g, svc, qrpcPkg, contextPkg)
 	}
 }
 
@@ -72,7 +71,7 @@ func generateFile(plugin *protogen.Plugin, f *protogen.File) {
 // handlers, service descriptor, client interface, and client implementation
 // for a single protobuf service. All methods must be unary; streaming methods
 // are rejected earlier by checkNoStreaming.
-func generateService(g *protogen.GeneratedFile, svc *protogen.Service, qrpcPkg, contextPkg, protoPkg protogen.GoImportPath) {
+func generateService(g *protogen.GeneratedFile, svc *protogen.Service, qrpcPkg, contextPkg protogen.GoImportPath) {
 	svcName := svc.GoName
 	fullName := string(svc.Desc.FullName())
 	methods := svc.Methods
@@ -95,17 +94,7 @@ func generateService(g *protogen.GeneratedFile, svc *protogen.Service, qrpcPkg, 
 	for _, m := range methods {
 		g.P("{")
 		g.P("MethodName: ", quote(m.GoName), ",")
-		g.P("Handler: func(ctx ", g.QualifiedGoIdent(contextPkg.Ident("Context")), ", payload, buf []byte) ([]byte, error) {")
-		g.P("in := new(", g.QualifiedGoIdent(m.Input.GoIdent), ")")
-		g.P("if err := ", g.QualifiedGoIdent(protoPkg.Ident("Unmarshal")), "(payload, in); err != nil {")
-		g.P("return nil, err")
-		g.P("}")
-		g.P("out, err := srv.", m.GoName, "(ctx, in)")
-		g.P("if err != nil {")
-		g.P("return nil, err")
-		g.P("}")
-		g.P("return ", g.QualifiedGoIdent(protoPkg.Ident("MarshalOptions")), "{}.MarshalAppend(buf, out)")
-		g.P("},")
+		g.P("Handler: ", g.QualifiedGoIdent(qrpcPkg.Ident("UnaryHandler")), "(srv.", m.GoName, "),")
 		g.P("},")
 	}
 	g.P("},")

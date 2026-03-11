@@ -6,7 +6,6 @@ package greeter
 import (
 	context "context"
 	qrpc "github.com/acycl/qrpc"
-	proto "google.golang.org/protobuf/proto"
 )
 
 // GreeterServer is the server API for the Greeter service.
@@ -21,17 +20,7 @@ func RegisterGreeterServer(s *qrpc.Server, srv GreeterServer) {
 		Methods: []qrpc.MethodDesc{
 			{
 				MethodName: "SayHello",
-				Handler: func(ctx context.Context, payload, buf []byte) ([]byte, error) {
-					in := new(HelloRequest)
-					if err := proto.Unmarshal(payload, in); err != nil {
-						return nil, err
-					}
-					out, err := srv.SayHello(ctx, in)
-					if err != nil {
-						return nil, err
-					}
-					return proto.MarshalOptions{}.MarshalAppend(buf, out)
-				},
+				Handler:    qrpc.UnaryHandler(srv.SayHello),
 			},
 		},
 	})

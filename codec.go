@@ -89,22 +89,6 @@ func readRequest(r io.Reader) (method, payload []byte, buf poolBuf, err error) {
 	return (*bp)[:methodLen], (*bp)[methodLen:], poolBuf{bp: bp}, nil
 }
 
-// writeResponse writes a complete success response frame to w in a single
-// write call. The payload must already be serialized. A pooled buffer is used
-// to avoid per-call heap allocations for the frame header.
-func writeResponse(w io.Writer, payload []byte) error {
-	bp := getBuf(5 + len(payload))
-	buf := (*bp)[:5+len(payload)]
-	buf[0] = statusOK
-	binary.BigEndian.PutUint32(buf[1:], uint32(len(payload)))
-	copy(buf[5:], payload)
-
-	_, err := w.Write(buf)
-	*bp = buf
-	putBuf(bp)
-	return err
-}
-
 // writeErrorResponse writes a complete error response frame to w in a single
 // write call. A pooled buffer is used to avoid per-call heap allocations.
 func writeErrorResponse(w io.Writer, rpcErr error) error {

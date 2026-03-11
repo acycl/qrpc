@@ -38,13 +38,9 @@ func generateTLSConfig(tb testing.TB) *tls.Config {
 	}
 }
 
-// echoHandler is a MethodHandler that echoes the request payload back.
-func echoHandler(ctx context.Context, payload, buf []byte) ([]byte, error) {
-	in := new(wrapperspb.BytesValue)
-	if err := proto.Unmarshal(payload, in); err != nil {
-		return nil, err
-	}
-	return proto.MarshalOptions{}.MarshalAppend(buf, in)
+// echo returns its input unchanged. Used as a service method via UnaryHandler.
+func echo(_ context.Context, in *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error) {
+	return in, nil
 }
 
 // setupEnv starts a qrpc server with an echo service and returns a connected
@@ -58,7 +54,7 @@ func setupEnv(tb testing.TB) *ClientConn {
 	s.RegisterService(&ServiceDesc{
 		ServiceName: "test.Echo",
 		Methods: []MethodDesc{
-			{MethodName: "Echo", Handler: echoHandler},
+			{MethodName: "Echo", Handler: UnaryHandler(echo)},
 		},
 	})
 

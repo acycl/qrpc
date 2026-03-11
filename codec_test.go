@@ -2,6 +2,7 @@ package qrpc
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"testing"
@@ -40,13 +41,18 @@ func TestRoundTripRequest(t *testing.T) {
 
 func TestRoundTripResponse(t *testing.T) {
 	resp := &wrapperspb.BytesValue{Value: []byte("world")}
-	respBytes, err := proto.Marshal(resp)
+	payload, err := proto.Marshal(resp)
 	if err != nil {
 		t.Fatal(err)
 	}
 
+	identity := func(_ context.Context, in *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error) {
+		return in, nil
+	}
+	handler := UnaryHandler(identity)
+
 	var buf bytes.Buffer
-	if err := writeResponse(&buf, respBytes); err != nil {
+	if err := handler(context.Background(), &buf, payload); err != nil {
 		t.Fatal(err)
 	}
 
@@ -117,34 +123,46 @@ func BenchmarkReadRequest(b *testing.B) {
 	}
 }
 
-func BenchmarkWriteResponse(b *testing.B) {
+func BenchmarkUnaryHandler(b *testing.B) {
+	identity := func(_ context.Context, in *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error) {
+		return in, nil
+	}
+	handler := UnaryHandler(identity)
+	ctx := context.Background()
+
 	for name, payload := range benchPayloads {
 		b.Run(name, func(b *testing.B) {
-			resp := &wrapperspb.BytesValue{Value: payload}
-			respBytes, err := proto.Marshal(resp)
+			req := &wrapperspb.BytesValue{Value: payload}
+			reqBytes, err := proto.Marshal(req)
 			if err != nil {
 				b.Fatal(err)
 			}
-			b.SetBytes(int64(5 + len(respBytes)))
+			b.SetBytes(int64(5 + proto.Size(req)))
 			b.ReportAllocs()
 			b.ResetTimer()
 			for b.Loop() {
-				writeResponse(io.Discard, respBytes)
+				handler(ctx, io.Discard, reqBytes)
 			}
 		})
 	}
 }
 
 func BenchmarkReadResponse(b *testing.B) {
+	identity := func(_ context.Context, in *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error) {
+		return in, nil
+	}
+	handler := UnaryHandler(identity)
+	ctx := context.Background()
+
 	for name, payload := range benchPayloads {
 		b.Run(name, func(b *testing.B) {
-			resp := &wrapperspb.BytesValue{Value: payload}
-			respBytes, err := proto.Marshal(resp)
+			req := &wrapperspb.BytesValue{Value: payload}
+			reqBytes, err := proto.Marshal(req)
 			if err != nil {
 				b.Fatal(err)
 			}
 			var buf bytes.Buffer
-			writeResponse(&buf, respBytes)
+			handler(ctx, &buf, reqBytes)
 			data := buf.Bytes()
 			b.SetBytes(int64(len(data)))
 			b.ReportAllocs()
