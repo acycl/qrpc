@@ -39,12 +39,12 @@ func generateTLSConfig(tb testing.TB) *tls.Config {
 }
 
 // echoHandler is a MethodHandler that echoes the request payload back.
-func echoHandler(ctx context.Context, srv any, payload []byte) (proto.Message, error) {
+func echoHandler(ctx context.Context, payload, buf []byte) ([]byte, error) {
 	in := new(wrapperspb.BytesValue)
 	if err := proto.Unmarshal(payload, in); err != nil {
 		return nil, err
 	}
-	return in, nil
+	return proto.MarshalOptions{}.MarshalAppend(buf, in)
 }
 
 // setupEnv starts a qrpc server with an echo service and returns a connected
@@ -60,7 +60,7 @@ func setupEnv(tb testing.TB) *ClientConn {
 		Methods: []MethodDesc{
 			{MethodName: "Echo", Handler: echoHandler},
 		},
-	}, nil)
+	})
 
 	serverTLS := tlsConfig.Clone()
 	serverTLS.NextProtos = []string{alpnProtocol}

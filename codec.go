@@ -89,28 +89,20 @@ func readRequest(r io.Reader) (method, payload []byte, buf poolBuf, err error) {
 	return (*bp)[:methodLen], (*bp)[methodLen:], poolBuf{bp: bp}, nil
 }
 
-// marshalResponse marshals msg and writes the complete success response frame
-// to w in a single write call. A pooled buffer is used to avoid per-call heap
-// allocations.
-func marshalResponse(w io.Writer, msg proto.Message) error {
-	payloadSize := proto.Size(msg)
-
-	bp := getBuf(5 + payloadSize)
-	buf := (*bp)[:5]
+// writeResponse writes a complete success response frame to w in a single
+// write call. The payload must already be serialized. A pooled buffer is used
+// to avoid per-call heap allocations for the frame header.
+func writeResponse(w io.Writer, payload []byte) error {
+	bp := getBuf(5 + len(payload))
+	buf := (*bp)[:5+len(payload)]
 	buf[0] = statusOK
+	binary.BigEndian.PutUint32(buf[1:], uint32(len(payload)))
+	copy(buf[5:], payload)
 
-	buf, err := proto.MarshalOptions{}.MarshalAppend(buf, msg)
-	if err != nil {
-		*bp = buf
-		putBuf(bp)
-		return fmt.Errorf("qrpc: marshal response: %w", err)
-	}
-	binary.BigEndian.PutUint32(buf[1:5], uint32(len(buf)-5))
-
-	_, writeErr := w.Write(buf)
+	_, err := w.Write(buf)
 	*bp = buf
 	putBuf(bp)
-	return writeErr
+	return err
 }
 
 // writeErrorResponse writes a complete error response frame to w in a single

@@ -89,34 +89,27 @@ func generateService(g *protogen.GeneratedFile, svc *protogen.Service, qrpcPkg, 
 	// --- Registration function ---
 	g.P("// Register", svcName, "Server registers a ", svcName, "Server implementation with the qrpc server.")
 	g.P("func Register", svcName, "Server(s *", g.QualifiedGoIdent(qrpcPkg.Ident("Server")), ", srv ", svcName, "Server) {")
-	g.P("s.RegisterService(&_", svcName, "_serviceDesc, srv)")
-	g.P("}")
-	g.P()
-
-	// --- Method handlers ---
-	for _, m := range methods {
-		handlerName := fmt.Sprintf("_%s_%s_Handler", svcName, m.GoName)
-		g.P("func ", handlerName, "(ctx ", g.QualifiedGoIdent(contextPkg.Ident("Context")), ", srv any, payload []byte) (", g.QualifiedGoIdent(protoPkg.Ident("Message")), ", error) {")
-		g.P("in := new(", g.QualifiedGoIdent(m.Input.GoIdent), ")")
-		g.P("if err := ", g.QualifiedGoIdent(protoPkg.Ident("Unmarshal")), "(payload, in); err != nil {")
-		g.P("return nil, err")
-		g.P("}")
-		g.P("return srv.(", svcName, "Server).", m.GoName, "(ctx, in)")
-		g.P("}")
-		g.P()
-	}
-
-	// --- Service descriptor ---
-	g.P("var _", svcName, "_serviceDesc = ", g.QualifiedGoIdent(qrpcPkg.Ident("ServiceDesc")), "{")
+	g.P("s.RegisterService(&", g.QualifiedGoIdent(qrpcPkg.Ident("ServiceDesc")), "{")
 	g.P("ServiceName: ", quote(fullName), ",")
 	g.P("Methods: []", g.QualifiedGoIdent(qrpcPkg.Ident("MethodDesc")), "{")
 	for _, m := range methods {
 		g.P("{")
 		g.P("MethodName: ", quote(m.GoName), ",")
-		g.P("Handler: _", svcName, "_", m.GoName, "_Handler,")
+		g.P("Handler: func(ctx ", g.QualifiedGoIdent(contextPkg.Ident("Context")), ", payload, buf []byte) ([]byte, error) {")
+		g.P("in := new(", g.QualifiedGoIdent(m.Input.GoIdent), ")")
+		g.P("if err := ", g.QualifiedGoIdent(protoPkg.Ident("Unmarshal")), "(payload, in); err != nil {")
+		g.P("return nil, err")
+		g.P("}")
+		g.P("out, err := srv.", m.GoName, "(ctx, in)")
+		g.P("if err != nil {")
+		g.P("return nil, err")
+		g.P("}")
+		g.P("return ", g.QualifiedGoIdent(protoPkg.Ident("MarshalOptions")), "{}.MarshalAppend(buf, out)")
+		g.P("},")
 		g.P("},")
 	}
 	g.P("},")
+	g.P("})")
 	g.P("}")
 	g.P()
 

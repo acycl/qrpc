@@ -40,9 +40,13 @@ func TestRoundTripRequest(t *testing.T) {
 
 func TestRoundTripResponse(t *testing.T) {
 	resp := &wrapperspb.BytesValue{Value: []byte("world")}
+	respBytes, err := proto.Marshal(resp)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	var buf bytes.Buffer
-	if err := marshalResponse(&buf, resp); err != nil {
+	if err := writeResponse(&buf, respBytes); err != nil {
 		t.Fatal(err)
 	}
 
@@ -113,15 +117,19 @@ func BenchmarkReadRequest(b *testing.B) {
 	}
 }
 
-func BenchmarkMarshalResponse(b *testing.B) {
+func BenchmarkWriteResponse(b *testing.B) {
 	for name, payload := range benchPayloads {
 		b.Run(name, func(b *testing.B) {
 			resp := &wrapperspb.BytesValue{Value: payload}
-			b.SetBytes(int64(5 + proto.Size(resp)))
+			respBytes, err := proto.Marshal(resp)
+			if err != nil {
+				b.Fatal(err)
+			}
+			b.SetBytes(int64(5 + len(respBytes)))
 			b.ReportAllocs()
 			b.ResetTimer()
 			for b.Loop() {
-				marshalResponse(io.Discard, resp)
+				writeResponse(io.Discard, respBytes)
 			}
 		})
 	}
@@ -131,8 +139,12 @@ func BenchmarkReadResponse(b *testing.B) {
 	for name, payload := range benchPayloads {
 		b.Run(name, func(b *testing.B) {
 			resp := &wrapperspb.BytesValue{Value: payload}
+			respBytes, err := proto.Marshal(resp)
+			if err != nil {
+				b.Fatal(err)
+			}
 			var buf bytes.Buffer
-			marshalResponse(&buf, resp)
+			writeResponse(&buf, respBytes)
 			data := buf.Bytes()
 			b.SetBytes(int64(len(data)))
 			b.ReportAllocs()

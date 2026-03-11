@@ -16,25 +16,25 @@ type GreeterServer interface {
 
 // RegisterGreeterServer registers a GreeterServer implementation with the qrpc server.
 func RegisterGreeterServer(s *qrpc.Server, srv GreeterServer) {
-	s.RegisterService(&_Greeter_serviceDesc, srv)
-}
-
-func _Greeter_SayHello_Handler(ctx context.Context, srv any, payload []byte) (proto.Message, error) {
-	in := new(HelloRequest)
-	if err := proto.Unmarshal(payload, in); err != nil {
-		return nil, err
-	}
-	return srv.(GreeterServer).SayHello(ctx, in)
-}
-
-var _Greeter_serviceDesc = qrpc.ServiceDesc{
-	ServiceName: "greeter.Greeter",
-	Methods: []qrpc.MethodDesc{
-		{
-			MethodName: "SayHello",
-			Handler:    _Greeter_SayHello_Handler,
+	s.RegisterService(&qrpc.ServiceDesc{
+		ServiceName: "greeter.Greeter",
+		Methods: []qrpc.MethodDesc{
+			{
+				MethodName: "SayHello",
+				Handler: func(ctx context.Context, payload, buf []byte) ([]byte, error) {
+					in := new(HelloRequest)
+					if err := proto.Unmarshal(payload, in); err != nil {
+						return nil, err
+					}
+					out, err := srv.SayHello(ctx, in)
+					if err != nil {
+						return nil, err
+					}
+					return proto.MarshalOptions{}.MarshalAppend(buf, out)
+				},
+			},
 		},
-	},
+	})
 }
 
 // GreeterClient is the client API for the Greeter service.
