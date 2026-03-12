@@ -1,15 +1,21 @@
 # qrpc
 
-A lightweight RPC framework for Go that runs over [QUIC](https://www.rfc-editor.org/rfc/rfc9000.html) instead of TCP. It uses [Protocol Buffers](https://protobuf.dev/) for service definitions and includes a `protoc` plugin that generates type-safe client and server stubs in the same style as [gRPC-Go](https://pkg.go.dev/google.golang.org/grpc) — server interfaces, registration functions, and typed client constructors.
+A lightweight RPC framework for Go that runs directly over [QUIC](https://www.rfc-editor.org/rfc/rfc9000.html) streams. It uses [Protocol Buffers](https://protobuf.dev/) for service definitions and includes a `protoc` plugin that generates type-safe client and server stubs in the same style as [gRPC-Go](https://pkg.go.dev/google.golang.org/grpc) — server interfaces, registration functions, and typed client constructors.
 
-Each RPC maps to a single QUIC stream, giving you built-in multiplexing, head-of-line blocking elimination, and TLS 1.3 encryption with zero extra setup.
+## Why QUIC without HTTP?
+
+gRPC sends protobuf messages through several layers of framing: protobuf payloads are wrapped in gRPC length-prefixed messages, carried inside HTTP/2 DATA frames with HPACK-compressed headers, and terminated by HTTP trailers that encode `grpc-status` and `grpc-message`. All of this runs over a TCP connection with a separate TLS handshake. Each layer adds complexity, overhead, and code that exists only to satisfy the requirements of the layer above it.
+
+QUIC eliminates the need for most of these layers. It provides multiplexed, independent streams with TLS 1.3 built into the handshake — the same core properties that HTTP/2 was designed to provide over TCP, but at the transport level. qrpc uses QUIC streams directly as the delivery mechanism for RPCs: each call opens a dedicated stream, writes a compact binary frame, and reads the response. There is no HTTP framing, no HPACK, no pseudo-headers, and no trailer-encoded status codes. The protocol negotiation that HTTP would normally handle is replaced by a single [ALPN](https://www.rfc-editor.org/rfc/rfc7301) token (`qrpc`) exchanged during the QUIC handshake.
+
+This means fewer allocations per call, less parsing, and a smaller dependency surface. The entire wire format is a handful of length-prefixed fields — simple enough to describe in a few lines and implement without a framing library.
 
 ## Features
 
 - **QUIC transport** — multiplexed streams over a single connection with no head-of-line blocking
 - **Protobuf code generation** — `protoc-gen-qrpc` generates familiar gRPC-style client interfaces, server interfaces, and registration glue from `.proto` files
 - **Transparent reconnection** — `ClientConn` automatically re-establishes the underlying QUIC connection on failure
-- **Minimal wire format** — compact binary framing with no HTTP/2 dependency
+- **Minimal wire format** — compact binary framing with no HTTP dependency
 - **Buffer pooling** — `sync.Pool`-backed buffers minimize per-RPC heap allocations
 - **Context cancellation** — client-side context cancellation propagates to stream teardown
 
@@ -166,13 +172,15 @@ buf generate
 
 ## Wire format
 
-Requests and responses use a compact binary framing. No HTTP/2, no HPACK, no grpc-status trailers — just length-prefixed fields on a QUIC stream.
+Each unary RPC occupies a single QUIC stream. The client writes a request frame and closes the write side of the stream; the server writes a response frame and the stream is complete. No additional framing, content negotiation, or status trailers are needed because QUIC itself handles stream boundaries, flow control, and encryption.
 
 **Request frame:**
 
 ```
 [4 bytes: method length] [4 bytes: payload length] [method] [payload]
 ```
+
+The method is the fully-qualified protobuf method path (e.g. `/greeter.Greeter/SayHello`). The payload is the serialized protobuf request message.
 
 **Response frame (success):**
 
@@ -185,6 +193,8 @@ Requests and responses use a compact binary framing. No HTTP/2, no HPACK, no grp
 ```
 [1 byte: 0x01] [4 bytes: message length] [error message]
 ```
+
+The single status byte replaces gRPC's trailer-encoded `grpc-status` and `grpc-message` fields. Errors are transmitted as plain UTF-8 strings.
 
 ## API overview
 
