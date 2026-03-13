@@ -107,6 +107,9 @@ func TestUnaryRPCUnknownService(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for unknown service")
 	}
+	if got := CodeFromError(err); got != Unimplemented {
+		t.Fatalf("code = %v, want %v", got, Unimplemented)
+	}
 }
 
 func TestUnaryRPCUnknownMethod(t *testing.T) {
@@ -119,6 +122,9 @@ func TestUnaryRPCUnknownMethod(t *testing.T) {
 	err := cc.Invoke(ctx, "/test.Echo/Unknown", req, reply)
 	if err == nil {
 		t.Fatal("expected error for unknown method")
+	}
+	if got := CodeFromError(err); got != Unimplemented {
+		t.Fatalf("code = %v, want %v", got, Unimplemented)
 	}
 }
 

@@ -37,7 +37,7 @@ func UnaryHandler[Req any, Resp any, PReq message[Req], PResp message[Resp]](
 	return func(ctx context.Context, w io.Writer, payload []byte) error {
 		in := PReq(new(Req))
 		if err := proto.Unmarshal(payload, in); err != nil {
-			return err
+			return Errorf(InvalidArgument, "unmarshal request: %v", err)
 		}
 		out, err := method(ctx, in)
 		if err != nil {
@@ -53,7 +53,7 @@ func UnaryHandler[Req any, Resp any, PReq message[Req], PResp message[Resp]](
 		if err != nil {
 			*bp = buf
 			putBuf(bp)
-			return err
+			return Errorf(Internal, "marshal response: %v", err)
 		}
 		binary.BigEndian.PutUint32(buf[1:5], uint32(len(buf)-5))
 
@@ -173,7 +173,7 @@ func (s *Server) Serve(ctx context.Context, listener *quic.Listener) error {
 
 // handleConn accepts streams from a single QUIC connection and dispatches each
 // as an independent RPC call.
-func (s *Server) handleConn(ctx context.Context, conn quic.Connection) {
+func (s *Server) handleConn(ctx context.Context, conn *quic.Conn) {
 	for {
 		stream, err := conn.AcceptStream(ctx)
 		if err != nil {
@@ -190,7 +190,7 @@ func (s *Server) handleConn(ctx context.Context, conn quic.Connection) {
 // handleStream reads a single RPC request from the stream, dispatches it to
 // the appropriate method handler, and writes the response. The handlers map is
 // accessed without a lock because it is immutable after Serve is called.
-func (s *Server) handleStream(stream quic.Stream) {
+func (s *Server) handleStream(stream *quic.Stream) {
 	defer stream.Close()
 
 	method, payload, reqBuf, err := readRequest(stream)
@@ -203,7 +203,7 @@ func (s *Server) handleStream(stream quic.Stream) {
 	// compiler to avoid heap allocation.
 	handler, ok := s.handlers[string(method)]
 	if !ok {
-		writeErrorResponse(stream, fmt.Errorf("qrpc: unknown method %q", method))
+		writeErrorResponse(stream, Errorf(Unimplemented, "unknown method %q", method))
 		return
 	}
 

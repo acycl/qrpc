@@ -8,11 +8,14 @@
 // Wire format for responses:
 //
 //	[1B status] [4B payload_len] [payload_bytes]
+//
+// On success (status=0), payload_bytes is the protobuf-encoded RPC response.
+// On error (status=1), payload_bytes is a marshaled statuspb.Status message
+// containing the error code, human-readable message, and optional details.
 package qrpc
 
 import (
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"io"
 
@@ -89,42 +92,52 @@ func readRequest(r io.Reader) (method, payload []byte, buf poolBuf, err error) {
 	return (*bp)[:methodLen], (*bp)[methodLen:], poolBuf{bp: bp}, nil
 }
 
-// writeErrorResponse writes a complete error response frame to w in a single
-// write call. A pooled buffer is used to avoid per-call heap allocations.
+// writeErrorResponse converts rpcErr to a *Status (if it isn't one already),
+// marshals the status as a protocol buffer, and writes the error response
+// frame to w in a single write call. A pooled buffer is used to avoid per-call
+// heap allocations.
 func writeErrorResponse(w io.Writer, rpcErr error) error {
-	msg := rpcErr.Error()
+	st := FromError(rpcErr)
+	sp := statusProto(st)
+	size := proto.Size(sp)
 
-	bp := getBuf(5 + len(msg))
-	buf := (*bp)[:5+len(msg)]
+	bp := getBuf(5 + size)
+	buf := (*bp)[:5]
 	buf[0] = statusError
-	binary.BigEndian.PutUint32(buf[1:], uint32(len(msg)))
-	copy(buf[5:], msg)
 
-	_, err := w.Write(buf)
+	buf, err := proto.MarshalOptions{}.MarshalAppend(buf, sp)
+	if err != nil {
+		*bp = buf
+		putBuf(bp)
+		return fmt.Errorf("qrpc: marshal status: %w", err)
+	}
+	binary.BigEndian.PutUint32(buf[1:5], uint32(len(buf)-5))
+
+	_, writeErr := w.Write(buf)
 	*bp = buf
 	putBuf(bp)
-	return err
+	return writeErr
 }
 
 // readResponse reads a response frame from r. On success it returns the raw
 // payload bytes backed by a pooled buffer. The caller must call
 // poolBuf.release when the payload is no longer needed. On error status it
-// returns an error containing the remote message (no poolBuf to release).
+// returns a *Status error (no poolBuf to release).
 func readResponse(r io.Reader) ([]byte, poolBuf, error) {
 	var hdr [5]byte
 	if _, err := io.ReadFull(r, hdr[:]); err != nil {
 		return nil, poolBuf{}, err
 	}
 
-	status := hdr[0]
+	flag := hdr[0]
 	payloadLen := binary.BigEndian.Uint32(hdr[1:])
 	if payloadLen > maxPayloadSize {
 		return nil, poolBuf{}, fmt.Errorf("qrpc: payload size %d exceeds maximum %d", payloadLen, maxPayloadSize)
 	}
 
 	if payloadLen == 0 {
-		if status == statusError {
-			return nil, poolBuf{}, errors.New("qrpc: remote error: (empty)")
+		if flag == statusError {
+			return nil, poolBuf{}, &Status{code: Unknown}
 		}
 		return nil, poolBuf{}, nil
 	}
@@ -133,10 +146,13 @@ func readResponse(r io.Reader) ([]byte, poolBuf, error) {
 	if err != nil {
 		return nil, poolBuf{}, err
 	}
-	if status == statusError {
-		errMsg := string(*bp)
+	if flag == statusError {
+		st, unmarshalErr := unmarshalStatus(*bp)
 		putBuf(bp)
-		return nil, poolBuf{}, fmt.Errorf("qrpc: remote error: %s", errMsg)
+		if unmarshalErr != nil {
+			return nil, poolBuf{}, fmt.Errorf("qrpc: unmarshal status: %w", unmarshalErr)
+		}
+		return nil, poolBuf{}, st
 	}
 	return *bp, poolBuf{bp: bp}, nil
 }

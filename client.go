@@ -18,7 +18,7 @@ type ClientConn struct {
 	tlsConfig *tls.Config
 
 	mu     sync.Mutex
-	conn   quic.Connection
+	conn   *quic.Conn
 	closed bool
 }
 
@@ -40,7 +40,7 @@ func Dial(ctx context.Context, addr string, tlsConfig *tls.Config) (*ClientConn,
 }
 
 // dial establishes a new QUIC connection using the stored parameters.
-func (cc *ClientConn) dial(ctx context.Context) (quic.Connection, error) {
+func (cc *ClientConn) dial(ctx context.Context) (*quic.Conn, error) {
 	tc := cc.tlsConfig.Clone()
 	tc.NextProtos = []string{alpnProtocol}
 	conn, err := quic.DialAddr(ctx, cc.addr, tc, defaultQUICConfig())
@@ -53,7 +53,7 @@ func (cc *ClientConn) dial(ctx context.Context) (quic.Connection, error) {
 // openStream returns a new QUIC stream, reconnecting once if the underlying
 // connection has failed. Concurrent callers that observe the same failed
 // connection coordinate so that only one performs the reconnection.
-func (cc *ClientConn) openStream(ctx context.Context) (quic.Stream, error) {
+func (cc *ClientConn) openStream(ctx context.Context) (*quic.Stream, error) {
 	cc.mu.Lock()
 	conn := cc.conn
 	cc.mu.Unlock()
@@ -84,7 +84,7 @@ func (cc *ClientConn) openStream(ctx context.Context) (quic.Stream, error) {
 // reconnect establishes a new connection if failedConn is still the active
 // one. If another goroutine has already reconnected, the new connection is
 // returned without dialing again.
-func (cc *ClientConn) reconnect(ctx context.Context, failedConn quic.Connection) (quic.Connection, error) {
+func (cc *ClientConn) reconnect(ctx context.Context, failedConn *quic.Conn) (*quic.Conn, error) {
 	cc.mu.Lock()
 	defer cc.mu.Unlock()
 

@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package qrpc.status.v1;
+
+option go_package = "github.com/acycl/qrpc/internal/statuspb";
+
+import "google/protobuf/any.proto";
+
+// Status describes the result of an RPC call.
+message Status {
+  // A status code corresponding to a qrpc.Code value.
+  int32 code = 1;
+
+  // A human-readable description of the error.
+  string message = 2;
+
+  // Additional structured error details.
+  repeated google.protobuf.Any details = 3;
+}

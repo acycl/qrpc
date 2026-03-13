@@ -11,6 +11,17 @@ import (
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
+// statusCode extracts a *Status from err using errors.As and returns it, or
+// fails the test if the error is not a *Status.
+func statusCode(t *testing.T, err error) *Status {
+	t.Helper()
+	var st *Status
+	if !errors.As(err, &st) {
+		t.Fatalf("expected *Status, got %T: %v", err, err)
+	}
+	return st
+}
+
 func TestRoundTripRequest(t *testing.T) {
 	method := "/test.Echo/Echo"
 	req := &wrapperspb.BytesValue{Value: []byte("hello")}
@@ -73,14 +84,68 @@ func TestRoundTripResponse(t *testing.T) {
 
 func TestRoundTripErrorResponse(t *testing.T) {
 	var buf bytes.Buffer
-	writeErrorResponse(&buf, errors.New("something broke"))
+	writeErrorResponse(&buf, Errorf(Internal, "something broke"))
 
 	_, _, err := readResponse(&buf)
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if got := err.Error(); got != "qrpc: remote error: something broke" {
-		t.Fatalf("error = %q, want %q", got, "qrpc: remote error: something broke")
+
+	st := statusCode(t, err)
+	if st.Code() != Internal {
+		t.Fatalf("code = %v, want %v", st.Code(), Internal)
+	}
+	if st.Message() != "something broke" {
+		t.Fatalf("message = %q, want %q", st.Message(), "something broke")
+	}
+}
+
+func TestRoundTripErrorResponsePlainError(t *testing.T) {
+	var buf bytes.Buffer
+	writeErrorResponse(&buf, errors.New("plain error"))
+
+	_, _, err := readResponse(&buf)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	st := statusCode(t, err)
+	if st.Code() != Unknown {
+		t.Fatalf("code = %v, want %v", st.Code(), Unknown)
+	}
+	if st.Message() != "plain error" {
+		t.Fatalf("message = %q, want %q", st.Message(), "plain error")
+	}
+}
+
+func TestRoundTripErrorResponseWithDetails(t *testing.T) {
+	detail := &wrapperspb.StringValue{Value: "field_name"}
+	st, err := Errorf(InvalidArgument, "bad field").WithDetails(detail)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	writeErrorResponse(&buf, st)
+
+	_, _, readErr := readResponse(&buf)
+	if readErr == nil {
+		t.Fatal("expected error")
+	}
+
+	got := statusCode(t, readErr)
+	if got.Code() != InvalidArgument {
+		t.Fatalf("code = %v, want %v", got.Code(), InvalidArgument)
+	}
+	if len(got.Details()) != 1 {
+		t.Fatalf("got %d details, want 1", len(got.Details()))
+	}
+	sv, ok := got.Details()[0].(*wrapperspb.StringValue)
+	if !ok {
+		t.Fatalf("detail type = %T, want *wrapperspb.StringValue", got.Details()[0])
+	}
+	if sv.Value != "field_name" {
+		t.Fatalf("detail value = %q, want %q", sv.Value, "field_name")
 	}
 }
 
